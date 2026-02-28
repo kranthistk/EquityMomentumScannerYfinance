@@ -37,8 +37,8 @@ def fetch_quote(symbol: str) -> dict | None:
         open_p     = info.open
         day_high   = info.day_high
         day_low    = info.day_low
-        week52_h   = info.fifty_two_week_high
-        week52_l   = info.fifty_two_week_low
+        week52_h   = info.year_high          # FastInfo uses year_high, not fifty_two_week_high
+        week52_l   = info.year_low           # FastInfo uses year_low, not fifty_two_week_low
         prev_close = info.previous_close
 
         # % Change vs previous close (same as NSE's "% Change")
