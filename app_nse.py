@@ -245,7 +245,7 @@ def watchlist_fragment():
         .applymap(color_vs_52w_low,  subset=["vs 52W Low %"])
         .set_properties(**{"text-align": "center"})
     )
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=280)
+    st.dataframe(styled, use_container_width=True, hide_index=True, height=380)
 
     st.divider()
 
