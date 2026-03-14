@@ -20,6 +20,7 @@ WATCHLIST = {
     "ASTRAL":     "Astral Limited",
     "AMBER":      "Amber Enterprises",
      "LT":      "LT",
+    "HDFCBANK": "HDFCBANK",
 }
 # ──────────────────────────────────────────────────────────────────────────────
 
