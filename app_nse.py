@@ -12,15 +12,15 @@ st.markdown("Auto-updates every **30 seconds** | Tracking select equity stocks")
 
 # ── Watchlist ──────────────────────────────────────────────────────────────────
 WATCHLIST = {
-    "GODREJPROP": "Godrej Properties",
-    "OFSS":       "Oracle Financial Services",
-    "ZYDUSLIFE":  "Zydus Life Sciences",
-    "VOLTAS":     "Voltas Limited",
-    "POLICYBZR":  "Policy Bazaar",
-    "ASTRAL":     "Astral Limited",
-    "AMBER":      "Amber Enterprises",
-     "LT":      "LT",
+    "LT": "LT",
     "HDFCBANK": "HDFCBANK",
+    "RELIANCE": "RELIANCE",
+    "BHARTIARTL": "BHARTIARTL",
+    "SBIN": "SBI",
+    "INFY": "Infyosis",
+    "AXISBANK": "AXISBANK",
+    "KOTAKBANK": "KOTAKBANK",
+    "ICICIBANK": "ICICIBANK"
 }
 # ──────────────────────────────────────────────────────────────────────────────
 
