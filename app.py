@@ -20,8 +20,8 @@ WATCHLIST = {
     "POLICYBZR":  "Policy Bazaar",
     "ASTRAL":     "Astral Limited",
     "AMBER":      "Amber Enterprises",
-     "LT":      "LT",
-    "HDFCBANK": "HDFCBANK",
+     "SRF":      "SRF",
+    "HEROMOTOCO": "HEROMOTOCO",
 }
 # ──────────────────────────────────────────────────────────────────────────────
 
