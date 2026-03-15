@@ -1,6 +1,7 @@
+
 import streamlit as st
 import pandas as pd
-import yfinance as yf
+from curl_cffi import requests
 import time
 from datetime import datetime
 import pytz
@@ -11,7 +12,6 @@ st.title("📊 NSE Watchlist Momentum Scanner")
 st.markdown("Auto-updates every **30 seconds** | Tracking select equity stocks")
 
 # ── Watchlist ──────────────────────────────────────────────────────────────────
-# NSE symbols on Yahoo Finance use the ".NS" suffix
 WATCHLIST = {
     "GODREJPROP": "Godrej Properties",
     "OFSS":       "Oracle Financial Services",
@@ -20,48 +20,70 @@ WATCHLIST = {
     "POLICYBZR":  "Policy Bazaar",
     "ASTRAL":     "Astral Limited",
     "AMBER":      "Amber Enterprises",
+     "LT":      "LT",
+    "HDFCBANK": "HDFCBANK",
 }
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def fetch_quote(symbol: str) -> dict | None:
+def make_session() -> requests.Session:
+    """Create a fresh browser-impersonating session and seed NSE cookies."""
+    session = requests.Session()
+    session.get("https://www.nseindia.com", impersonate="chrome120", timeout=12)
+    return session
+
+
+def fetch_quote(session: requests.Session, symbol: str) -> dict | None:
     """
-    Fetch live quote data for a single NSE symbol via yfinance.
+    Fetch live quote + trade-info section for a single NSE symbol.
     Returns a flat dict of fields we care about, or None on failure.
     """
+    base_url  = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
+    quote_url = f"{base_url}&timestamp={int(time.time())}"
+    trade_url = f"{base_url}&section=trade_info&timestamp={int(time.time())}"
+
     try:
-        ticker = yf.Ticker(f"{symbol}.NS")
-        info   = ticker.fast_info          # lightweight — fewer network calls
+        resp = session.get(quote_url, impersonate="chrome120", timeout=10)
+        if resp.status_code != 200:
+            st.warning(f"⚠️ {symbol}: HTTP {resp.status_code}")
+            return None
 
-        ltp        = info.last_price
-        open_p     = info.open
-        day_high   = info.day_high
-        day_low    = info.day_low
-        week52_h   = info.year_high          # FastInfo uses year_high, not fifty_two_week_high
-        week52_l   = info.year_low           # FastInfo uses year_low, not fifty_two_week_low
-        prev_close = info.previous_close
+        data       = resp.json()
+        price_info = data.get("priceInfo", {})
+        sec_info   = data.get("securityInfo", {})
 
-        # % Change vs previous close (same as NSE's "% Change")
-        pchange = ((ltp - prev_close) / prev_close * 100) if prev_close else None
+        ltp      = price_info.get("lastPrice")
+        open_p   = price_info.get("open")
+        pchange  = price_info.get("pChange")
+        day_high = price_info.get("intraDayHighLow", {}).get("max")
+        day_low  = price_info.get("intraDayHighLow", {}).get("min")
+        week52_h = price_info.get("weekHighLow", {}).get("max")
+        week52_l = price_info.get("weekHighLow", {}).get("min")
+        vwap     = price_info.get("vwap")
 
-        # VWAP — computed from today's 1-minute bars
-        vwap = None
-        try:
-            hist = ticker.history(period="1d", interval="1m")
-            if not hist.empty:
-                tp   = (hist["High"] + hist["Low"] + hist["Close"]) / 3
-                vwap = (tp * hist["Volume"]).cumsum().iloc[-1] / hist["Volume"].cumsum().iloc[-1]
-        except Exception:
-            pass
-
-        # ── Open-based % changes ───────────────────────────────────────────
         def pct_from_open(val):
             try:
-                if open_p and open_p != 0 and val is not None:
-                    return ((val - open_p) / open_p) * 100
+                if open_p and float(open_p) != 0 and val is not None:
+                    return ((float(val) - float(open_p)) / float(open_p)) * 100
             except (TypeError, ValueError):
                 pass
             return None
+
+        avg_vol = None
+        try:
+            t_resp = session.get(trade_url, impersonate="chrome120", timeout=10)
+            if t_resp.status_code == 200:
+                t_data    = t_resp.json()
+                trade_sec = t_data.get("tradeInfo", {})
+                mkt_trade = t_data.get("marketDeptOrderBook", {}).get("tradeInfo", {})
+                avg_vol = (
+                    trade_sec.get("cmAverageTradedVolume")
+                    or trade_sec.get("averageTradedVolume")
+                    or mkt_trade.get("cmAverageTradedVolume")
+                    or t_data.get("cmAverageTradedVolume")
+                )
+        except Exception:
+            pass
 
         return {
             "Symbol":     symbol,
@@ -70,8 +92,8 @@ def fetch_quote(symbol: str) -> dict | None:
             "% Change":   pchange,
             "Open":       open_p,
             "Open→LTP %": pct_from_open(ltp),
-            "High→LTP %": ((ltp - day_high) / day_high * 100) if day_high and ltp else None,
-            "Low→LTP %":  ((ltp - day_low)  / day_low  * 100) if day_low  and ltp else None,
+            "High→LTP %": (((float(ltp) - float(day_high)) / float(day_high)) * 100) if day_high and ltp else None,
+            "Low→LTP %":  (((float(ltp) - float(day_low))  / float(day_low))  * 100) if day_low  and ltp else None,
             "VWAP":       vwap,
             "High":       day_high,
             "Low":        day_low,
@@ -139,23 +161,23 @@ def dist_from_52w(row, col_ltp, col_ref):
 def watchlist_fragment():
     ist          = pytz.timezone("Asia/Kolkata")
     current_time = datetime.now(ist).strftime("%H:%M:%S")
-    st.caption(f"🔄 Last refreshed: **{current_time} IST**  *(~15 min delayed via Yahoo Finance)*")
+    st.caption(f"🔄 Last refreshed: **{current_time} IST** | Live NSE data")
 
-    with st.spinner("Fetching quotes…"):
+    with st.spinner("Fetching quotes from NSE…"):
+        session = make_session()
         rows = []
         for symbol in WATCHLIST:
-            quote = fetch_quote(symbol)
+            quote = fetch_quote(session, symbol)
             if quote:
                 rows.append(quote)
-            time.sleep(0.2)   # small courtesy delay
+            time.sleep(0.3)
 
     if not rows:
-        st.error("❌ Could not fetch any data. Check your internet connection or try again later.")
+        st.error("❌ Could not fetch any data. NSE may be blocking requests or markets are closed.")
         return
 
     df = pd.DataFrame(rows)
 
-    # ── Numeric coercion ──────────────────────────────────────────────────────
     numeric_cols = [
         "LTP", "% Change", "Open", "Open→LTP %", "High→LTP %", "Low→LTP %",
         "VWAP", "High", "Low", "52W High", "52W Low",
@@ -163,16 +185,11 @@ def watchlist_fragment():
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # ── Derived 52W distance columns ──────────────────────────────────────────
     df["vs 52W High %"] = df.apply(lambda r: dist_from_52w(r, "LTP", "52W High"), axis=1)
     df["vs 52W Low %"]  = df.apply(lambda r: dist_from_52w(r, "LTP", "52W Low"),  axis=1)
-
-    # ── Sort by % Change descending ───────────────────────────────────────────
     df = df.sort_values("% Change", ascending=False).reset_index(drop=True)
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SECTION 1 – Compact snapshot cards
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ── Snapshot cards ─────────────────────────────────────────────────────────
     st.subheader("📌 Live Snapshot")
     card_cols = st.columns(len(df))
     for i, row in df.iterrows():
@@ -180,7 +197,6 @@ def watchlist_fragment():
         arrow = "▲" if pchg > 0 else "▼" if pchg < 0 else "■"
         bg    = "#d4edda" if pchg > 0 else "#f8d7da" if pchg < 0 else "#e9ecef"
         txt   = "#155724" if pchg > 0 else "#721c24" if pchg < 0 else "#495057"
-
         with card_cols[i]:
             st.markdown(
                 f"""
@@ -196,9 +212,7 @@ def watchlist_fragment():
 
     st.divider()
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SECTION 2 – Full detail table
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ── Detail table ───────────────────────────────────────────────────────────
     st.subheader("📋 Detailed Table  *(sorted by % Change)*")
 
     display_cols = [
@@ -208,7 +222,6 @@ def watchlist_fragment():
         "High", "Low",
         "52W High", "52W Low", "vs 52W High %", "vs 52W Low %",
     ]
-
     fmt = {
         "LTP":           "₹{:.2f}",
         "% Change":      "{:+.2f}%",
@@ -224,7 +237,6 @@ def watchlist_fragment():
         "vs 52W High %": "{:+.2f}%",
         "vs 52W Low %":  "{:+.2f}%",
     }
-
     styled = (
         df[display_cols]
         .style
@@ -235,14 +247,11 @@ def watchlist_fragment():
         .applymap(color_vs_52w_low,  subset=["vs 52W Low %"])
         .set_properties(**{"text-align": "center"})
     )
-
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=280)
+    st.dataframe(styled, use_container_width=True, hide_index=True, height=380)
 
     st.divider()
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SECTION 3 – Intraday range meter
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ── Range meter ────────────────────────────────────────────────────────────
     st.subheader("📏 Intraday Range Position")
     range_cols = st.columns(len(df))
     for i, row in df.iterrows():
@@ -251,9 +260,7 @@ def watchlist_fragment():
             with range_cols[i]:
                 st.caption(f"{row['Symbol']}: range N/A")
             continue
-
         pct_pos = int(((ltp - low) / (high - low)) * 100)
-
         with range_cols[i]:
             st.markdown(f"**{row['Symbol']}** — {pct_pos}% of range")
             st.progress(pct_pos / 100)
